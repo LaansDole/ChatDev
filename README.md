@@ -1,4 +1,4 @@
-# ChatDev 2.0 - DevAll
+# Multi-Agent Platform
 
 <p align="center">
   <img src="frontend/public/media/logo.png" alt="DevAll Logo" width="500"/>
@@ -17,7 +17,7 @@
 </p>
 
 ## 📖 Overview
-ChatDev has evolved from a specialized software development multi-agent system into a comprehensive multi-agent orchestration platform.
+Inspired by the success of [ChatDev 2.0 (DevAll)](https://github.com/OpenBMB/ChatDev/tree/main), the objective of this project is to create a general-purpose multi-agent platform that can be used to solve a wide range of problems. For example, [Hospital Simulation](./yaml_instance/simulation_hospital.yaml) can simulate the process of a hospital in a specific scenario; or [Game Development](./yaml_instance/GameDev_v1.yaml) can simulate the process of game development.
 
 - <a href="https://github.com/OpenBMB/ChatDev/tree/main">**ChatDev 2.0 (DevAll)**</a> is a **Zero-Code Multi-Agent Platform** for "Developing Everything". It empowers users to rapidly build and execute customized multi-agent systems through simple configuration. No coding is required—users can define agents, workflows, and tasks to orchestrate complex scenarios such as data visualization, 3D generation, and deep research.
 - <a href="https://github.com/OpenBMB/ChatDev/tree/chatdev1.0">**ChatDev 1.0 (Legacy)**</a> operates as a **Virtual Software Company**. It utilizes various intelligent agents (e.g., CEO, CTO, Programmer) participating in specialized functional seminars to automate the entire software development life cycle—including designing, coding, testing, and documenting. It serves as the foundational paradigm for communicative agent collaboration.
@@ -250,6 +250,7 @@ We provide robust, out-of-the-box templates for common scenarios. All runnable w
 | **🛠️ 3D Generation**<br>*(Requires [Blender](https://www.blender.org/) & [blender-mcp](https://github.com/ahujasid/blender-mcp))* | `blender_3d_builder_simple.yaml`<br>`blender_3d_builder_hub.yaml`<br>`blender_scientific_illustration.yaml` | <img src="assets/cases/3d_generation/3d.gif" width="100%"><br>Prompt: *"Please build a Christmas tree."* |
 | **🎮 Game Dev** | `GameDev_v1.yaml`<br>`ChatDev_v1.yaml`                                                                      | <img src="assets/cases/game_development/game.gif" width="100%"><br>Prompt: *"Please help me design and develop a Tank Battle game."* |
 | **📚 Deep Research** | `deep_research_v1.yaml`                                                                                     | <img src="assets/cases/deep_research/deep_research.gif" width="85%"><br>Prompt: *"Research about recent advances in the field of LLM-based agent RL"* |
+| **🏥 Hospital Simulation** | `simulation_hospital.yaml`                                                                                  | Multi-agent hospital simulation with parallel patient processing. Features environment-aware agents (nurses, doctors, patients) that adapt behavior based on hospital conditions. Includes dynamic patient generation, medical diagnosis loops, and memory-based patient tracking.<br>Prompt: *"March 2020, COVID-19 outbreak beginning. Hospital scrambling to set up isolation protocols."* |
 | **🎓 Teach Video** | `teach_video.yaml` (Please run command `uv add manim` before running this workflow)                         | <img src="assets/cases/video_generation/video.gif" width="140%"><br>Prompt: *"讲一下什么是凸优化"* |
 
 ---
