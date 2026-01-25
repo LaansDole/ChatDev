@@ -11,12 +11,16 @@ vars:
   base_url: ${BASE_URL}
   # Higher number of patients will need a more powerful model
   NUMBER_OF_PATIENTS: 1
+  # Number of interactions between doctor and patient
+  NUMBER_OF_INTERACTIONS: 5
+  MAX_TOKENS: 4000
   COMMON_PROMPT: |
     You are an intelligent agent participating in a high-fidelity hospital simulation.
     
     CORE DIRECTIVES:
     1. IMMERSION: Stay in character at all times. Never break the fourth wall.
     2. ADAPTABILITY: Your behavior, tone, and pacing must change dynamically based on the "Hospital Atmosphere" described in the input.
+    3. PERSPECTIVE: You MUST always act in first person perspective.
     
     Current Role:
 
@@ -41,8 +45,8 @@ graph:
           base_url: ${BASE_URL}
           api_key: ${API_KEY}
           model: text-embedding-bge-reranker-v2-m3
-    
-    - name: patient_shared_memory
+
+    - name: doctor_memory
       type: simple
       config:
         embedding:
@@ -87,7 +91,7 @@ graph:
         base_url: ${base_url}
         params:
           temperature: 0.7
-          max_tokens: 800
+          max_tokens: ${MAX_TOKENS}
       
     # Patient Generator (Creates parallel scenarios)
     - id: PatientGenerator
@@ -97,36 +101,62 @@ graph:
       config:
         role: |
           ${COMMON_PROMPT}
-          You are a simulation coordinator generating patient scenarios.
+          You are a simulation coordinator generating patient scenarios that DIRECTLY reflect the hospital environment.
           
-          Based on the hospital environment described, generate exactly ${NUMBER_OF_PATIENTS} distinct patient scenarios/personas that match the environmental context.
+          CRITICAL INSTRUCTION: Every patient you generate MUST be a logical consequence of the specific environmental conditions described. You are NOT generating random patients - you are generating the EXACT patients who would realistically arrive given these specific circumstances.
           
-          REQUIREMENTS:
-          - Patient scenarios MUST align with the hospital environment context
-          - If specific outbreak mentioned: Generate related symptoms
-          - Mix simple and complex cases appropriately for the environment
-          - Patient name MUST be meaningful and unique
-          - Output STRICT JSON ONLY - no conversational text
+          MANDATORY ENVIRONMENT-DRIVEN GENERATION RULES:
+          
+          1. URGENCY LEVEL DETERMINES CASE SEVERITY:
+             - Critical/High Urgency → Generate mostly severe/urgent cases (trauma, cardiac events, respiratory distress)
+             - Medium Urgency → Mix of moderate issues (infections, fractures, acute pain)
+             - Low Urgency → Mostly minor cases (follow-ups, mild symptoms, chronic management)
+          
+          2. TIME CONTEXT DETERMINES PATIENT TYPE:
+             - Late night/Early morning → Accidents, emergencies, insomnia, acute pain
+             - Daytime/Business hours → Routine visits, work injuries, varied presentations
+             - Weekend → Home accidents, sports injuries, delayed care-seeking
+          
+          3. SPECIAL CONDITIONS DETERMINE SYMPTOMS:
+             - Outbreak/Epidemic mentioned → Multiple patients with related symptoms (respiratory, GI, fever)
+             - Weather impact (heat wave/cold/storm) → Weather-related conditions (heat stroke, hypothermia, storm injuries)
+             - Mass casualty event → Similar injury patterns (blast injuries, crush injuries, burns)
+             - Equipment failure → Cases requiring specific equipment show up before failure is known
+          
+          4. EMOTIONAL ATMOSPHERE DETERMINES PERSONALITY:
+             - Chaotic → Patients are MORE panicked, agitated, demanding
+             - Calm → Patients are composed, patient, cooperative
+             - Tense → Patients pick up on staff stress, become anxious
+          
+          5. MANDATORY ENVIRONMENT REFLECTION:
+             - If ${NUMBER_OF_PATIENTS} = 1: Patient MUST directly reflect the crisis/scenario (e.g., COVID outbreak = respiratory symptoms)
+             - If ${NUMBER_OF_PATIENTS} > 1: AT LEAST ${NUMBER_OF_PATIENTS}/2 patients MUST have symptoms directly caused by or related to the environmental conditions
+          
+          WRONG EXAMPLES (Do NOT do this):
+          - COVID-19 outbreak → Patient with sprained ankle (WRONG - ignores environment)
+          - Nuclear disaster radiation exposure → Patient with common cold (WRONG - not crisis-related)
+          - Heatwave → Patient with frostbite (WRONG - contradicts environment)
+          
+          RIGHT EXAMPLES (Do this):
+          - COVID-19 outbreak → Patients with fever, dry cough, difficulty breathing, loss of taste/smell
+          - Nuclear disaster → Patients with radiation burns, nausea, confusion, visible injuries
+          - Heatwave → Patients with heat exhaustion, dehydration, heat stroke, elderly with complications
           
           OUTPUT FORMAT:
-          Provide a list of exactly ${NUMBER_OF_PATIENTS} JSON objects with mandatory fields:
+          Output ONLY a JSON array with exactly ${NUMBER_OF_PATIENTS} objects. Each object MUST include:
           
           [
             {
-              "name": "Sarah",
-              "symptoms": "Fever, cough",
-              "personality": "Anxious",
-              "context": "Middle-aged woman...",
-              "urgency": "Medium"
-            },
-            {
-              "name": "John",
-              "symptoms": "...",
-              "personality": "...",
-              "context": "...",
-              "urgency": "Low/Medium/High"
+              "name": "Meaningful Full Name",
+              "symptoms": "Specific symptoms DIRECTLY caused by or related to the environment",
+              "personality": "Emotional state reflecting the atmosphere (panicked/calm/anxious/stoic)",
+              "context": "Age, occupation, and HOW the environment affected them specifically",
+              "urgency": "Low/Medium/High/Critical - matching environment urgency level",
+              "environment_link": "ONE sentence explaining why THIS patient is here given THESE conditions"
             }
           ]
+          
+          CRITICAL: Do NOT generate generic patients. Generate patients whose presence is EXPLAINED by the environmental context.
         
         provider: openai
         name: gemma2-9b-it-psy10k-mental_health-i1
@@ -134,7 +164,7 @@ graph:
         base_url: ${base_url}
         params:
           temperature: 0.7
-          max_tokens: 1200
+          max_tokens: ${MAX_TOKENS}
 
     # Router Node for Patient Regex Split
     - id: PatientRouter
@@ -174,12 +204,7 @@ graph:
         base_url: ${base_url}
         params:
           temperature: 0.8
-          max_tokens: 1000
-        memories:
-          - name: patient_shared_memory
-            top_k: 5
-            retrieve_stage:
-              - gen
+          max_tokens: ${MAX_TOKENS}
         
     # End Node (Diagnosis)
     - id: Discharge
@@ -210,7 +235,7 @@ graph:
         base_url: ${base_url}
         params:
           temperature: 0.3
-          max_tokens: 150
+          max_tokens: ${MAX_TOKENS}
 
     # Doctor Agent - Diagnosis
     - id: DoctorDiagnosis
@@ -228,7 +253,6 @@ graph:
           - Retrieve actual patient data from memory (do NOT use placeholder text)
           - Extract patient name from the "patient" field first
           - Review the "history" field thoroughly before making decisions
-          - Look for patient names in the nurse intake conversation
           - Follow the mandatory diagnostic process below
           
           DIAGNOSTIC PROCESS:
@@ -240,13 +264,15 @@ graph:
              - If confident: "DIAGNOSIS: [Specific condition] - [Brief treatment plan]"
              - If critical/unclear/life-threatening: "TRANSFER: ER immediately - [Specific concern]"
           
-          OUTPUT FORMAT:
-          PATIENT: <ACTUAL_PATIENT_NAME_FROM_NURSE_INTAKE>
+          OUTPUT FORMAT (STRICT JSON ONLY):
+          {
+            "patient": "<ACTUAL_PATIENT_NAME_FROM_MEMORY>",
+            "summary": "Brief 2-4 sentence summary of key findings so far",
+            "differential": ["Possible condition 1", "Possible condition 2"],
+          }
           
-          SUMMARY OF KEY FINDINGS
-          [4-8 sentences of medical reasoning showing diagnostic thought process]
-          
-          FINAL DECISION: [Either "DIAGNOSIS:" or "TRANSFER:" with details]
+          FINAL DECISION (IN PLAIN TEXT): 
+          [Either "DIAGNOSIS:" or "TRANSFER:" with details]
                   
         provider: openai
         name: gemma2-9b-it-psy10k-mental_health-i1
@@ -254,11 +280,35 @@ graph:
         base_url: ${base_url}
         params:
           temperature: 0.7
-          max_tokens: 2000
+          max_tokens: ${MAX_TOKENS}
+        thinking:
+          type: reflection
+          config:
+            reflection_prompt: |
+              You have just completed a diagnostic assessment. Now critically review your diagnostic reasoning:
+              
+              REFLECTION CHECKLIST:
+              1. EVIDENCE REVIEW: Did you consider ALL symptoms and history from the patient record?
+              2. DIFFERENTIAL DIAGNOSIS: Did you properly evaluate alternative diagnoses? Are there conditions you missed?
+              3. REASONING SOUNDNESS: Are there any logical gaps or unsupported conclusions in your reasoning?
+              4. URGENCY ASSESSMENT: Is your urgency determination (discharge vs transfer) appropriate given the symptoms?
+              
+              Based on this reflection:
+              - If your original diagnosis is solid, reaffirm it with stronger justification
+              - If you find flaws, provide a corrected diagnosis with explanation
+              
+              Maintain the same output format.
         memories:
           - name: nurse_memory
             top_k: 10
+            similarity_threshold: 0.75
             retrieve_stage:
+              - gen
+          - name: doctor_memory
+            top_k: 15
+            similarity_threshold: 0.7
+            retrieve_stage:
+              - pre_gen_thinking
               - gen
 
     # Doctor Agent - Intake
@@ -274,13 +324,27 @@ graph:
           The hospital atmosphere described affects your patience and approach. You are tracking multiple patients in parallel, each with their own separate history.
           
           REQUIREMENTS:
-          - Retrieve actual patient data from memory
-          - Look for patient names in the nurse intake conversation
-          - Your questions must be medically related
-          - You will only ask questions, do not provide any other output
+          - Retrieve actual patient data from memory (do NOT use placeholder text)
+          - Extract patient name from the "patient" field first
+          - Review the "history" field thoroughly before making question(s)
+          - Follow the mandatory question process below
           
-          OUTPUT FORMAT:
-          QUESTION: [Question]
+          QUESTION PROCESS:
+          1. Extract Patient Name from the "patient" field
+          2. Summarize Key Findings - list all symptoms, timeline, relevant history
+          3. Differential Diagnosis - consider 2-3 possible conditions based on evidence
+          4. Formulate Questions to elicit more information
+          
+          OUTPUT FORMAT (STRICT JSON ONLY):
+          {
+            "patient": "<ACTUAL_PATIENT_NAME_FROM_MEMORY>",
+            "questions": [
+              "First specific question to narrow diagnosis",
+              "Second question targeting different diagnostic possibility"
+            ]
+          }
+          
+          CRITICAL: Output ONLY valid JSON object. No additional text before or after.
         
         provider: openai
         name: gemma2-9b-it-psy10k-mental_health-i1
@@ -288,11 +352,36 @@ graph:
         base_url: ${base_url}
         params:
           temperature: 0.7
-          max_tokens: 1600
+          max_tokens: ${MAX_TOKENS}
+        thinking:
+          type: reflection
+          config:
+            reflection_prompt: |
+              You have just formulated questions for the patient interview. Review your question strategy:
+              
+              REFLECTION CHECKLIST:
+              1. REDUNDANCY CHECK:
+                 - Does your new question request information you ALREADY HAVE from previous answers?
+                 - Example BAD: Q1 asked "When did pain start?" → Q3 asks "How long have you had this?"
+                 - Example BAD: Q2 asked "Any radiation?" → Q4 asks "Does pain spread anywhere?"
+              
+              2. PROGRESSION CHECK:
+                 - Are you building on previous answers or just repeating?
+                 - Are you narrowing the differential diagnosis or spinning wheels?
+              
+              Maintain the same JSON output format with updated questions if needed.
         memories:
           - name: nurse_memory
             top_k: 5
+            similarity_threshold: 0.6
             retrieve_stage:
+              - pre_gen_thinking
+              - gen
+          - name: doctor_memory
+            top_k: 5
+            similarity_threshold: 0.65
+            retrieve_stage:
+              - pre_gen_thinking
               - gen
 
     # Medical Scribe (DoctorNotes)
@@ -312,6 +401,7 @@ graph:
           - Extract real patient names from nurse intake notes
           - Output STRICT JSON ONLY - no conversational text
           - CRITICAL: Do NOT output arrays until you receive "LOOP ENDED." signal
+          - CRITICAL: DEDUPLICATE patients by name - one entry per unique patient name
           
           TASK SCENARIOS:
           
@@ -326,7 +416,11 @@ graph:
           2. LOOP SIGNAL (only when input explicitly contains "LOOP ENDED."):
              - This signals the question loop has ended for ALL patients
              - NOW retrieve ALL patient histories from memory
-             - Extract all real patient names from nurse intake notes
+             - Extract all UNIQUE patient names from nurse intake notes
+             - DEDUPLICATION PROCESS (CRITICAL):
+               * Group all memory entries by patient name
+               * If multiple histories exist for same patient, use the one with most questions
+               * Each patient should appear EXACTLY ONCE in the output array
              - Output ONLY a bare JSON array (no wrapper object)
              - Do NOT copy example names - use actual names from memory
           
@@ -336,22 +430,24 @@ graph:
           {
             "status": "UPDATE",
             "patient": "<ACTUAL_PATIENT_NAME_FROM_NURSE_INTAKE>",
-            "content": "Q1: Nurse intake - <ACTUAL_SYMPTOMS_AND_CONTEXT_FROM_MEMORY>. Q2: <ACTUAL_DOCTOR_QUESTION> - <ACTUAL_PATIENT_ANSWER>. Q3: ... Q4: ..."
+            "history": "Q1: Nurse intake - <ACTUAL_SYMPTOMS_AND_CONTEXT_FROM_MEMORY>. Q2: <ACTUAL_DOCTOR_QUESTION> - <ACTUAL_PATIENT_ANSWER>. Q3: ... Q4: ..."
           }
           
-          For "LOOP ENDED." signal - BARE JSON ARRAY ONLY (ALL PATIENTS):
+          For "LOOP ENDED." signal - BARE JSON ARRAY ONLY (UNIQUE PATIENTS):
           [
             {
               "patient": "<ACTUAL_PATIENT_NAME_FROM_NURSE_INTAKE>",
-              "history": "Q1: Nurse intake - <ACTUAL_SYMPTOMS_AND_CONTEXT_FROM_MEMORY>. Q2: <ACTUAL_DOCTOR_QUESTION> - <ACTUAL_PATIENT_ANSWER>. Q3: ... Q4: ..."
+              "history": "Q1: Nurse intake - <ACTUAL_SYMPTOMS_AND_CONTEXT_FROM_MEMORY>. Q2: <ACTUAL_DOCTOR_QUESTION> - <ACTUAL_PATIENT_ANSWER>. Q3: ... Q4: ... Q5: ..."
             },
             {
-              "patient": "<SECOND_PATIENT_NAME_FROM_NURSE_INTAKE>",
-              "history": "Q1: ... Q2: ... Q3: ... Q4: ..."
+              "patient": "<SECOND_UNIQUE_PATIENT_NAME>",
+              "history": "Q1: ... Q2: ... Q3: ... Q4: ... Q5: ..."
             }
           ]
           
           CRITICAL NOTES:
+          - Use the MOST COMPLETE history (e.g., Q1-Q4 is better than Q1-Q3)
+          - Number of patients in output = Number of UNIQUE patient names
           - Default behavior: OUTPUT UPDATE object for single patient
           - Only output array when you see "LOOP ENDED." in the input
           - Examples show FORMAT only - populate with real data from memory
@@ -364,12 +460,53 @@ graph:
         base_url: ${base_url}
         params:
           temperature: 0.1
-          max_tokens: 2500
+          max_tokens: ${MAX_TOKENS}
+        thinking:
+          type: reflection
+          config:
+            reflection_prompt: |
+              You have just compiled patient clinical notes. Verify data integrity:
+              
+              VERIFICATION CHECKLIST:
+              1. COMPLETENESS CHECK:
+                 - For UPDATE: Does the history include ALL prior interactions (Q1, Q2, Q3...) from memory?
+                 - For LOOP ENDED: Are ALL patients from memory included in the array?
+              
+              2. ACCURACY CHECK:
+                 - Are patient names EXACTLY as they appear in nurse intake (no placeholders, no generic names)?
+                 - Does each history accurately reflect the actual conversation from memory?
+              
+              3. FORMAT CHECK:
+                 - Is the JSON format correct (valid syntax, no extra text)?
+                 - UPDATE: Single object with "status", "patient", "history" fields?
+                 - LOOP ENDED: Bare array with "patient", "history" fields?
+              
+              4. SEQUENCE CHECK:
+                 - Is the Q1, Q2, Q3... sequence complete with no gaps?
+                 - Does each Q include both the doctor's question AND patient's answer?
+              
+              If you find ANY issues:
+              - Retrieve missing data from memory
+              - Ensure valid JSON format
+              
+              If everything is correct, return the same output unchanged.
         memories:
           - name: nurse_memory
-            top_k: 20
+            top_k: 50
+            similarity_threshold: -1.0
             retrieve_stage:
+              - pre_gen_thinking
               - gen
+            read: true
+            write: false
+          - name: doctor_memory
+            top_k: 100
+            similarity_threshold: -1.0
+            retrieve_stage:
+              - pre_gen_thinking
+              - gen
+            read: true
+            write: true
 
     # Router for DoctorNotes
     - id: DoctorNotesRouter
@@ -420,13 +557,13 @@ graph:
         base_url: ${base_url}
         params:
           temperature: 0.7
-          max_tokens: 1500
+          max_tokens: ${MAX_TOKENS}
         memories:
           - name: nurse_memory
             top_k: 5
             retrieve_stage:
               - gen
-
+              
     # Transfer Node (Failure/Referral)
     - id: ER Transfer
       type: agent
@@ -457,7 +594,7 @@ graph:
         base_url: ${base_url}
         params:
           temperature: 0.3
-          max_tokens: 300
+          max_tokens: ${MAX_TOKENS}
 
     # Patient Interaction Node (For Doctor Loop)
     - id: PatientInteraction
@@ -487,7 +624,7 @@ graph:
         base_url: ${base_url}
         params:
           temperature: 0.8
-          max_tokens: 500
+          max_tokens: ${MAX_TOKENS}
 
     # Loop Counter Guard (Limit Questions)
     - id: LoopGuard
@@ -495,7 +632,7 @@ graph:
       name: Question Limiter
       description: 'Limits the number of doctor questions'
       config:
-        max_iterations: 8
+        max_iterations: ${NUMBER_OF_INTERACTIONS}
         reset_on_emit: true
         message: "LOOP ENDED."
 
@@ -535,13 +672,24 @@ graph:
           {{input}}
           ========================================
           
-          Based on this SPECIFIC hospital atmosphere, generate 2 distinct, VIVID patient personas.
+          CRITICAL MISSION: Generate ${NUMBER_OF_PATIENTS} patient(s) whose symptoms and arrival are DIRECT CONSEQUENCES of the conditions above.
           
-          REQUIREMENTS:
-          - Patient behaviors should reflect the emotional atmosphere (anxious if chaotic, relaxed if calm)
-          - Consider how the described conditions would realistically affect who shows up
+          ANALYSIS REQUIRED BEFORE GENERATING:
+          1. What is the PRIMARY crisis/condition mentioned? (outbreak, disaster, weather, mass casualty, etc.)
+          2. What SPECIFIC symptoms would patients have from THIS crisis?
+          3. What is the urgency level? (Generate patients matching this urgency)
+          4. What is the emotional tone? (Generate personalities reflecting this)
           
-          Make them diverse in age, personality, and severity of symptoms while staying TRUE to the environment.
+          GENERATION CONSTRAINTS:
+          - If an outbreak/epidemic is mentioned → Patients MUST have related symptoms (respiratory, fever, specific disease symptoms)
+          - If a disaster is mentioned → Patients MUST have disaster-related injuries (radiation, trauma, environmental)
+          - If weather is extreme → Patients MUST have weather-related conditions (heat stroke, hypothermia, storm injuries)
+          - If understaffed/overwhelmed → Generate higher urgency cases that justify the chaos
+          - If calm/quiet → Generate lower urgency, routine cases
+          
+          DO NOT generate random patients. Generate patients whose presence makes logical sense given these SPECIFIC conditions.
+          
+          Now generate exactly ${NUMBER_OF_PATIENTS} patient(s).
     
     # Generator -> Router (Regex Split)
     - from: PatientGenerator
@@ -580,9 +728,17 @@ graph:
           You are the patient described in this JSON data:
           {{input}}
           
+          CRITICAL CONTEXT: Pay special attention to the "environment_link" field - this explains WHY you are here and WHAT happened to you in the specific situation. Your symptoms and behavior should reflect this backstory.
+          
           You are currently standing at the hospital reception.
-          Approach Nurse Jackie and explain what's wrong. Be dramatic or quiet depending on your persona.
-          Don't use any "Action:" prefixes. Just speak naturally.
+          Approach Nurse Jackie and explain what's wrong.
+          
+          REQUIREMENTS:
+          - Embody the personality described (panicked, calm, anxious, stoic, etc.)
+          - Reference HOW you got your symptoms if it's relevant to your story
+          - Your urgency and demeanor should match the severity described
+          
+          Don't use any "Action:" prefixes. Just speak naturally as this patient would.
     
     # Patient -> Nurse
     - from: PatientAgent
