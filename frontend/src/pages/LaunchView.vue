@@ -380,16 +380,21 @@
         </Transition>
       </div>
 
-          <label class="section-label">Prompt History</label>
+          <label class="section-label">
+            Prompt History
+            <span v-if="currentWorkflowHistory.length" class="history-count">
+              ({{ currentWorkflowHistory.length }}/{{ MAX_HISTORY_ITEMS }})
+            </span>
+          </label>
           <div class="prompt-history">
             <div
-              v-if="!promptHistory.length"
+              v-if="!currentWorkflowHistory.length"
               class="prompt-history-empty"
             >
-              No prompts yet
+              No prompts for this workflow yet
             </div>
             <div
-              v-for="(prompt, index) in promptHistory"
+              v-for="(prompt, index) in currentWorkflowHistory"
               :key="`prompt-${index}`"
               class="prompt-history-item"
             >
@@ -406,6 +411,16 @@
                 </svg>
               </button>
             </div>
+            
+            <button
+              v-if="currentWorkflowHistory.length"
+              type="button"
+              class="clear-history-button"
+              @click="clearWorkflowHistory(selectedFile)"
+              title="Clear prompt history for this workflow"
+            >
+              Clear History
+            </button>
           </div>
 
           <label class="section-label">Status</label>
@@ -524,8 +539,9 @@ const route = useRoute()
 
 // Task input state
 const taskPrompt = ref('')
-const promptHistory = ref([])
-const MAX_HISTORY_ITEMS = 10
+const promptHistories = ref({}) // { 'workflow.yaml': ['prompt1', 'prompt2'], ... }
+const MAX_HISTORY_ITEMS = 5
+const PROMPT_HISTORY_STORAGE_KEY = 'devall_workflow_prompt_histories'
 
 // File selector state
 const workflowFiles = ref([])
@@ -703,6 +719,12 @@ const buttonLabel = computed(() => {
     return 'Relaunch'
   }
   return 'Launch'
+})
+
+// Current workflow's prompt history
+const currentWorkflowHistory = computed(() => {
+  if (!selectedFile.value) return []
+  return promptHistories.value[selectedFile.value] || []
 })
 
 const clearUploadedAttachments = () => {
@@ -1361,7 +1383,7 @@ const sendHumanInput = () => {
 
   // Add to prompt history
   if (trimmedInput) {
-    addToPromptHistory(trimmedInput)
+    addToPromptHistory(trimmedInput, selectedFile.value)
   }
 
   clearUploadedAttachments()
@@ -1496,6 +1518,9 @@ onMounted(() => {
   document.addEventListener('click', handleClickOutside)
   document.addEventListener('keydown', handleKeydown)
   loadWorkflows()
+
+  // Load prompt histories from localStorage
+  promptHistories.value = loadPromptHistories()
 
   // Start the global timer
   if (!loadingTimerInterval) {
@@ -1720,19 +1745,57 @@ const switchToGraph = async () => {
   await loadVueFlowGraph({ fit: true })
 }
 
-const addToPromptHistory = (prompt) => {
+// LocalStorage utility functions for prompt history
+const loadPromptHistories = () => {
+  try {
+    const stored = localStorage.getItem(PROMPT_HISTORY_STORAGE_KEY)
+    if (!stored) return {}
+    const parsed = JSON.parse(stored)
+    return typeof parsed === 'object' && parsed !== null ? parsed : {}
+  } catch (error) {
+    console.warn('Failed to load prompt histories from localStorage:', error)
+    return {}
+  }
+}
+
+const savePromptHistories = () => {
+  try {
+    localStorage.setItem(PROMPT_HISTORY_STORAGE_KEY, JSON.stringify(promptHistories.value))
+  } catch (error) {
+    console.error('Failed to save prompt histories to localStorage:', error)
+  }
+}
+
+const addToPromptHistory = (prompt, workflowFile) => {
   const trimmed = prompt.trim()
-  if (!trimmed) return
+  if (!trimmed || !workflowFile) return
   
-  // Remove duplicates
-  promptHistory.value = promptHistory.value.filter(p => p !== trimmed)
+  // Get or create history array for this workflow
+  if (!promptHistories.value[workflowFile]) {
+    promptHistories.value[workflowFile] = []
+  }
+  
+  // Remove duplicates within this workflow's history
+  promptHistories.value[workflowFile] = promptHistories.value[workflowFile].filter(p => p !== trimmed)
   
   // Add to the beginning
-  promptHistory.value.unshift(trimmed)
+  promptHistories.value[workflowFile].unshift(trimmed)
   
   // Keep only the latest MAX_HISTORY_ITEMS
-  if (promptHistory.value.length > MAX_HISTORY_ITEMS) {
-    promptHistory.value = promptHistory.value.slice(0, MAX_HISTORY_ITEMS)
+  if (promptHistories.value[workflowFile].length > MAX_HISTORY_ITEMS) {
+    promptHistories.value[workflowFile] = promptHistories.value[workflowFile].slice(0, MAX_HISTORY_ITEMS)
+  }
+  
+  // Save to localStorage
+  savePromptHistories()
+}
+
+const clearWorkflowHistory = (workflowFile) => {
+  if (!workflowFile) return
+  
+  if (promptHistories.value[workflowFile]) {
+    delete promptHistories.value[workflowFile]
+    savePromptHistories()
   }
 }
 
@@ -1787,7 +1850,7 @@ const launchWorkflow = async () => {
     if (response.ok) {
       // Add to prompt history
       if (trimmedPrompt) {
-        addToPromptHistory(trimmedPrompt)
+        addToPromptHistory(trimmedPrompt, selectedFile.value)
       }
 
       // Clear uploaded attachments
@@ -3455,6 +3518,7 @@ watch(
   text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   word-break: break-word;
 }
@@ -3483,6 +3547,41 @@ watch(
 
 .prompt-copy-button:active {
   transform: scale(0.95);
+}
+
+/* History count indicator */
+.history-count {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+/* Clear history button */
+.clear-history-button {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 82, 82, 0.3);
+  background: rgba(255, 82, 82, 0.1);
+  color: rgba(255, 150, 150, 0.9);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.clear-history-button:hover {
+  background: rgba(255, 82, 82, 0.2);
+  border-color: rgba(255, 82, 82, 0.5);
+  color: #ffcccc;
+}
+
+.clear-history-button:active {
+  transform: scale(0.98);
 }
 
 </style>
